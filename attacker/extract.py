@@ -135,7 +135,7 @@ if __name__ == '__main__':
             classes[f] = [sample]
 
     KEY = [None] * 16
-    for col in cols:
+    for m, col in zip(M, cols):
 
         # extract key candidates from every faulty pair
         cts = classes[frozenset(col)]
@@ -144,7 +144,7 @@ if __name__ == '__main__':
             guess(
                 [ct[i] for i in col],
                 [correct[i] for i in col],
-                [2, 1, 1, 3],
+                m,
                 K
             )
 
@@ -156,6 +156,6 @@ if __name__ == '__main__':
                     assert KEY[j] is None
                     KEY[j] = k[i]
 
-        print('Partial Key:', KEY)
+        print('Partial Key:', KEY, v)
 
     print('KEY:', bytes(KEY).hex())
