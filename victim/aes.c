@@ -3,17 +3,6 @@
 #define MUL2(x) (((x) << 1) ^ (0x1B & (((x) >> 7) * 0xFF)))
 #define MUL3(x) ((x) ^ MUL2(x))
 
-#ifdef DEBUG
-#include <stdio.h>
-#include <stdint.h>
-
-void print_hex(uint8_t* b, size_t len) {
-    for (size_t i = 0; i < len; i++)
-        printf("%02x", b[i]);
-    printf("\n");
-}
-#endif
-
 uint8_t sbox[256] = {
   0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76,
   0xCA, 0x82, 0xC9, 0x7D, 0xFA, 0x59, 0x47, 0xF0, 0xAD, 0xD4, 0xA2, 0xAF, 0x9C, 0xA4, 0x72, 0xC0,
@@ -151,33 +140,9 @@ void aes_encrypt(uint8_t *pt, aes_expanded_key_t* const key) {
     // normal rounds
     uint8_t rnd = 1;
     for (;rnd < 10; rnd++) {
-
-#ifdef DEBUG
-    printf("\nstart: ");
-    print_hex((uint8_t*) st, AES_BLOCKSIZE);
-#endif
-
         sub_bytes(st);
-
-#ifdef DEBUG
-    printf("s_box: ");
-    print_hex((uint8_t*) st, AES_BLOCKSIZE);
-#endif
-
         shift_rows(st);
-
-#ifdef DEBUG
-    printf("s_row: ");
-    print_hex((uint8_t*) st, AES_BLOCKSIZE);
-#endif
-
         mix_columns(st);
-
-#ifdef DEBUG
-    printf("m_col: ");
-    print_hex((uint8_t*) st, AES_BLOCKSIZE);
-#endif
-
         add_key(st, key->keys[rnd]);
     }
 

@@ -41,6 +41,7 @@ void uart_hex(uint8_t c) {
     uart_putchar(HEX[c & 0xf]);
 }
 
+__attribute__((optimize("unroll-loops")))
 int main (void) {
     uint8_t pt[AES_BLOCKSIZE];
     aes_expanded_key_t ekey;
@@ -69,6 +70,7 @@ int main (void) {
         // print(pt)
         for (uint8_t i = 0; i < sizeof pt; i++)
             uart_hex(pt[i]);
+
         uart_putchar('\n');
         uart_putchar('\r');
     }
