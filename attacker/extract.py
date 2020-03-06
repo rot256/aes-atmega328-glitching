@@ -1,8 +1,7 @@
-#!/usr/bin/env python3
-
 import sys
 import binascii
 import itertools
+import collections
 
 sbox = [
     0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76,
@@ -23,19 +22,39 @@ sbox = [
     0x8C, 0xA1, 0x89, 0x0D, 0xBF, 0xE6, 0x42, 0x68, 0x41, 0x99, 0x2D, 0x0F, 0xB0, 0x54, 0xBB, 0x16
 ]
 
-sboxI = list(range(0x100))
-for i in range(0x100):
-    sboxI[sbox[i]] = i
+# shift row permutation
+shift_rows = [
+    0, 13, 10, 7,
+    4, 1, 14, 11,
+    8, 5, 2, 15,
+    12, 9, 6, 3,
+]
 
-def diff(s1, s2):
-    idx = set([])
-    for i in range(len(s1)):
-        if s1[i] != s2[i]:
-            idx.add(i)
-    return frozenset(idx)
+# indexes for every column
+cols = [
+    (0, 1, 2, 3),
+    (4, 5, 6, 7),
+    (8, 9, 10, 11),
+    (12, 13, 14, 15)
+]
 
-def dist(s1, s2):
-    return len(diff(s1, s2))
+def inv_perm(perm):
+    inv = [0] * len(perm)
+    for i in range(len(perm)):
+        inv[perm[i]] = i
+    return inv
+
+sboxI = inv_perm(sbox)
+
+def mix_column(v):
+    assert len(v)
+
+    r1 = mult(2, v[0]) ^ mult(3, v[1]) ^ v[2] ^ v[3]
+    r2 = v[0] ^ mult(2, v[1]) ^ mult(3, v[2]) ^ v[3]
+    r3 = v[0] ^ v[1] ^ mult(2, v[2]) ^ mult(3, v[3])
+    r4 = mult(3, v[0]) ^ v[1] ^ v[2] ^ mult(2, v[3])
+
+    return (r1, r2, r3, r4)
 
 def mult(a, b):
     assert 0x100 > a >= 0
@@ -56,106 +75,91 @@ def mult(a, b):
 
     return r
 
-assert mult(0x53, 0xCA) == 0x1
-assert mult(0b01010111, 0x1) == 0b01010111
-assert mult(0b01010111, 0x2) == 0b10101110
+def recover(ct_correct, ct_fault, I, K):
+    assert len(I) == 4
+    assert len(ct_correct) == len(ct_fault) == 16
 
-def guess(s1, s2, m, K):
-
-    assert len(m) == 4
-    assert len(s1) == 4
-    assert len(s2) == 4
-
-    print(s1, s2, m)
-
-    # find all satisfying keys for difference
-    def solve(x1A, x1B, D):
+    def solve(xA, xB, D):
         ks = []
         for k in range(0x100):
-            if D == sboxI[x1A ^ k] ^ sboxI[x1B ^ k]:
+            if D == sboxI[xA ^ k] ^ sboxI[xB ^ k]:
                 ks.append(k)
         assert len(ks) in (0, 2, 4)
-        return frozenset(ks)
+        return ks
 
-    # consider all non-zero differences
-    for d in range(0x01, 0x100):
-        ks0 = solve(s1[0], s2[0], mult(d, m[0]))
-        if len(ks0) == 0:
-            continue
+    for r in range(4): # guess the row of the fault
+        f = [0, 0, 0, 0]
+        for d in range(1, 0x100): # guess the difference
+            f[r] = d
+            D = mix_column(f)
 
-        ks1 = solve(s1[1], s2[1], mult(d, m[1]))
-        if len(ks1) == 0:
-            continue
+            # calculate candiates for each byte
+            ks = [[], [], [], []]
+            for j, i in enumerate(I):
+                ks[j] = solve(ct_correct[i], ct_fault[i], D[j])
+                if len(ks[j]) == 0:
+                    break
 
-        ks2 = solve(s1[2], s2[2], mult(d, m[2]))
-        if len(ks2) == 0:
-            continue
-
-        ks3 = solve(s1[3], s2[3], mult(d, m[3]))
-        if len(ks3) == 0:
-            continue
-
-        for k in itertools.product(ks0, ks1, ks2, ks3):
-            try:
+            # expand the cross product to get full 32-bit keys
+            for k in itertools.product(*ks):
                 K[k] += 1
-            except KeyError:
-                K[k] = 1
+
+def diff(s1, s2):
+    idx = set([])
+    for i in range(len(s1)):
+        if s1[i] != s2[i]:
+            idx.add(i)
+    return frozenset(idx)
 
 if __name__ == '__main__':
-
+    # sample file
     with open(sys.argv[1], 'r') as f:
         samples = map(str.strip, f.readlines())
         samples = [binascii.unhexlify(s) for s in samples]
 
-    cols = [
-        [0, 13, 10, 7],
-        [4, 1, 14, 11],
-        [8, 5, 2, 15],
-        [12, 9, 6, 3]
-    ]
-
-    M = [
-        [2, 1, 1, 3],
-        [3, 2, 1, 1],
-        [1, 3, 2, 1],
-        [1, 1, 3, 2]
-    ]
-
-    bundles = [frozenset(c) for c in cols]
+    # correct ciphertext
     correct = binascii.unhexlify(sys.argv[2])
-    classes = {}
-    hist = {k: 0 for k in range(17)}
 
+    # optional threshold
+    try:
+        threshold = int(sys.argv[3])
+    except IndexError:
+        threshold = None
+
+    # group ciphertext by faulty indexes
+    Is = [tuple([shift_rows[v] for v in col]) for col in cols]
+    groups = { I: [] for I in Is}
     for sample in samples:
-        f = diff(correct, sample)
-        hist[len(f)] += 1
-        try:
-            classes[f].append(sample)
-        except KeyError:
-            classes[f] = [sample]
+        df = diff(sample, correct)
+        for I in Is:
+            if all([i in df for i in I]):
+                groups[I].append(sample)
 
+    # extract from every group of faulty indexes
     KEY = [None] * 16
-    for m, col in zip(M, cols):
+    for I in Is:
+        print('I : %14s, ciphertexts: %d' % (I, len(groups[I])))
 
-        # extract key candidates from every faulty pair
-        cts = classes[frozenset(col)]
-        K = {}
-        for ct in cts:
-            guess(
-                [ct[i] for i in col],
-                [correct[i] for i in col],
-                m,
-                K
-            )
+        # find the most seen 32-bit key candidates
+        K = collections.Counter()
+        for i, sample in enumerate(groups[I]):
 
-        # pick the most seen
-        v = max([K[k] for k in K])
-        for k in K:
-            if K[k] == v:
-                for i, j in enumerate(col):
-                    assert KEY[j] is None
-                    KEY[j] = k[i]
+            show = ''.join(['%02x' % v if v else '??' for v in KEY])
 
-        print('Partial Key:', KEY, v)
+            print('Key: %s, Sample %d / %d, Cand: %d, Top: %s' % (show, i, len(groups[I]), len(K), K.most_common(2)))
+            recover(correct, sample, I, K)
+
+            try:
+                _, cnt = K.most_common(1)[0]
+                if cnt >= threshold:
+                    break
+            except ValueError:
+                pass
+
+        # fill in the full round key with the recovered 32-bits
+        key, _ = K.most_common(1)[0]
+        for j, i in enumerate(I):
+            assert KEY[i] is None
+            KEY[i] = key[j]
 
     print('KEY:', bytes(KEY).hex())
