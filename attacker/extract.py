@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import sys
 import binascii
 import itertools
@@ -22,7 +24,7 @@ sbox = [
     0x8C, 0xA1, 0x89, 0x0D, 0xBF, 0xE6, 0x42, 0x68, 0x41, 0x99, 0x2D, 0x0F, 0xB0, 0x54, 0xBB, 0x16
 ]
 
-# shift row permutation
+# shift row permutation on indexes
 shift_rows = [
     0, 13, 10, 7,
     4, 1, 14, 11,
@@ -46,16 +48,6 @@ def inv_perm(perm):
 
 sboxI = inv_perm(sbox)
 
-def mix_column(v):
-    assert len(v)
-
-    r1 = mult(2, v[0]) ^ mult(3, v[1]) ^ v[2] ^ v[3]
-    r2 = v[0] ^ mult(2, v[1]) ^ mult(3, v[2]) ^ v[3]
-    r3 = v[0] ^ v[1] ^ mult(2, v[2]) ^ mult(3, v[3])
-    r4 = mult(3, v[0]) ^ v[1] ^ v[2] ^ mult(2, v[3])
-
-    return (r1, r2, r3, r4)
-
 def mult(a, b):
     assert 0x100 > a >= 0
     assert 0x100 > b >= 0
@@ -75,6 +67,27 @@ def mult(a, b):
 
     return r
 
+def mix_column(v):
+    assert len(v) == 4
+
+    r1 = mult(2, v[0]) ^ mult(3, v[1]) ^ v[2] ^ v[3]
+    r2 = v[0] ^ mult(2, v[1]) ^ mult(3, v[2]) ^ v[3]
+    r3 = v[0] ^ v[1] ^ mult(2, v[2]) ^ mult(3, v[3])
+    r4 = mult(3, v[0]) ^ v[1] ^ v[2] ^ mult(2, v[3])
+
+    return (r1, r2, r3, r4)
+
+def mix_fault(d, row):
+    col = [0, 0, 0, 0]
+    col[row] = d
+    return mix_column(col)
+
+Ds = []
+
+for row in range(4):
+    for d in range(1, 0x100):
+        Ds.append(mix_fault(d, row))
+
 def recover(ct_correct, ct_fault, I, K):
     assert len(I) == 4
     assert len(ct_correct) == len(ct_fault) == 16
@@ -87,22 +100,17 @@ def recover(ct_correct, ct_fault, I, K):
         assert len(ks) in (0, 2, 4)
         return ks
 
-    for r in range(4): # guess the row of the fault
-        f = [0, 0, 0, 0]
-        for d in range(1, 0x100): # guess the difference
-            f[r] = d
-            D = mix_column(f)
+    for D in Ds:
+        # calculate candiates for each byte
+        ks = [[], [], [], []]
+        for j, i in enumerate(I):
+            ks[j] = solve(ct_correct[i], ct_fault[i], D[j])
+            if len(ks[j]) == 0:
+                break
 
-            # calculate candiates for each byte
-            ks = [[], [], [], []]
-            for j, i in enumerate(I):
-                ks[j] = solve(ct_correct[i], ct_fault[i], D[j])
-                if len(ks[j]) == 0:
-                    break
-
-            # expand the cross product to get full 32-bit keys
-            for k in itertools.product(*ks):
-                K[k] += 1
+        # expand the cross product to get full 32-bit keys
+        for k in itertools.product(*ks):
+            K[k] += 1
 
 def diff(s1, s2):
     idx = set([])
@@ -143,17 +151,18 @@ if __name__ == '__main__':
         # find the most seen 32-bit key candidates
         K = collections.Counter()
         for i, sample in enumerate(groups[I]):
-
-            show = ''.join(['%02x' % v if v else '??' for v in KEY])
-
-            print('Key: %s, Sample %d / %d, Cand: %d, Top: %s' % (show, i, len(groups[I]), len(K), K.most_common(2)))
             recover(correct, sample, I, K)
 
+            # print status
+            show = ''.join(['%02x' % v if v else '??' for v in KEY])
+            print('Key: %s, Sample %d / %d, Cand: %d, Top: %s' % (show, i, len(groups[I]), len(K), K.most_common(2)))
+
+            # check optional threshold
             try:
                 _, cnt = K.most_common(1)[0]
                 if cnt >= threshold:
                     break
-            except ValueError:
+            except:
                 pass
 
         # fill in the full round key with the recovered 32-bits

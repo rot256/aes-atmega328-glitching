@@ -5,12 +5,13 @@ parameter CLK_HZ = 25000000; // 25 MHz
 parameter CONTROL_HZ = 8000000; // 8 MHz
 
 parameter RESET = 2'b00;  // power off
-parameter POWER = 2'b01;  // power onn
+parameter POWER = 2'b01;  // power on
 parameter GLITCH = 2'b10; // do the glitch
-parameter WAIT = 2'b11;   // wait for serial
+parameter WAIT = 2'b11;   // wait for boot
 
 parameter GLITCHES = 5000; // glitch 5000 times before reset
 
+parameter WAIT_LEN = CLK_HZ;
 parameter RESET_LEN = CLK_HZ;
 parameter POWER_LEN = CLK_HZ / 2000;
 parameter GLITCH_LEN = 1;
